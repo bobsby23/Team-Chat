@@ -5,9 +5,6 @@
   "functions": {
     "app/api/messages/route.ts": {
       "maxDuration": 10
-    },
-    "app/api/sse/route.ts": {
-      "maxDuration": 300
     }
   },
   "headers": [
@@ -25,31 +22,6 @@
         {
           "key": "Referrer-Policy",
           "value": "strict-origin-when-cross-origin"
-        }
-      ]
-    },
-    {
-      "source": "/api/sse",
-      "headers": [
-        {
-          "key": "Content-Type",
-          "value": "text/event-stream"
-        },
-        {
-          "key": "Cache-Control",
-          "value": "no-cache, no-store, must-revalidate"
-        },
-        {
-          "key": "Connection",
-          "value": "keep-alive"
-        },
-        {
-          "key": "Access-Control-Allow-Origin",
-          "value": "*"
-        },
-        {
-          "key": "X-Accel-Buffering",
-          "value": "no"
         }
       ]
     }

@@ -9,6 +9,7 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // Removed SSE-specific headers as Supabase Realtime handles this
   async headers() {
     return [
       {
@@ -29,35 +30,6 @@ const nextConfig = {
           {
             key: 'Permissions-Policy',
             value: 'camera=(), microphone=(), geolocation=()',
-          },
-        ],
-      },
-      {
-        source: '/api/sse',
-        headers: [
-          {
-            key: 'Content-Type',
-            value: 'text/event-stream',
-          },
-          {
-            key: 'Cache-Control',
-            value: 'no-cache, no-store, must-revalidate',
-          },
-          {
-            key: 'Connection',
-            value: 'keep-alive',
-          },
-          {
-            key: 'Access-Control-Allow-Origin',
-            value: '*',
-          },
-          {
-            key: 'Access-Control-Allow-Headers',
-            value: 'Cache-Control',
-          },
-          {
-            key: 'X-Accel-Buffering',
-            value: 'no',
           },
         ],
       },
