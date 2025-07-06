@@ -1,90 +1,111 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { getSupabaseServerClient } from "@/lib/supabase"
+import { ChatEncryption } from "@/lib/encryption"
 
-// In-memory storage for typing users and online users (still limited by serverless instances)
-// For true persistence and real-time presence, Supabase Presence would be needed.
-const typingUsers: Record<string, { username: string; timestamp: number }> = {}
-const onlineUsers = new Set<string>()
+// In-memory storage for typing users and online users per room
+const typingUsers: Record<string, Record<string, { username: string; timestamp: number }>> = {}
+const onlineUsers: Record<string, Set<string>> = {}
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const action = searchParams.get("action")
   const username = searchParams.get("username")
-  const supabase = getSupabaseServerClient() // Get server-side client
+  const roomId = searchParams.get("roomId") || "public"
+  const supabase = getSupabaseServerClient()
 
   if (!supabase) {
-    console.error("Supabase server client is null. Cannot process API request.")
     return NextResponse.json({ error: "Supabase not configured on server" }, { status: 500 })
   }
 
   if (action === "join" && username) {
-    onlineUsers.add(username)
-    console.log(`👋 User joined: ${username}, total online: ${onlineUsers.size}`)
-    // In a real app, you'd update a 'presence' table in Supabase
-    return NextResponse.json({ success: true, onlineUsers: Array.from(onlineUsers) })
+    if (!onlineUsers[roomId]) onlineUsers[roomId] = new Set()
+    onlineUsers[roomId].add(username)
+    console.log(`👋 User joined room ${roomId}: ${username}, total online: ${onlineUsers[roomId].size}`)
+    return NextResponse.json({ success: true, onlineUsers: Array.from(onlineUsers[roomId] || []) })
   }
 
   if (action === "leave" && username) {
-    onlineUsers.delete(username)
-    console.log(`👋 User left: ${username}, total online: ${onlineUsers.size}`)
-    // In a real app, you'd update a 'presence' table in Supabase
+    if (onlineUsers[roomId]) {
+      onlineUsers[roomId].delete(username)
+      console.log(`👋 User left room ${roomId}: ${username}, total online: ${onlineUsers[roomId].size}`)
+    }
     return NextResponse.json({ success: true })
   }
 
   if (action === "typing") {
+    if (!typingUsers[roomId]) typingUsers[roomId] = {}
     const now = Date.now()
-    Object.keys(typingUsers).forEach((key) => {
-      if (now - typingUsers[key].timestamp > 3000) {
-        delete typingUsers[key]
+    Object.keys(typingUsers[roomId]).forEach((key) => {
+      if (now - typingUsers[roomId][key].timestamp > 3000) {
+        delete typingUsers[roomId][key]
       }
     })
     return NextResponse.json({
-      typing: Object.values(typingUsers).map((t) => t.username),
-      onlineUsers: Array.from(onlineUsers),
+      typing: Object.values(typingUsers[roomId] || {}).map((t) => t.username),
+      onlineUsers: Array.from(onlineUsers[roomId] || []),
     })
   }
 
-  // Fetch messages from Supabase, ordered by creation time
+  // Get room info first
+  const { data: room } = await supabase.from("chat_rooms").select("*").eq("invite_code", roomId).single()
+
+  if (!room) {
+    return NextResponse.json({ error: "Room not found" }, { status: 404 })
+  }
+
+  // Fetch messages for this room
   const { data: messages, error } = await supabase
     .from("messages")
     .select("*")
+    .eq("room_id", room.id)
     .order("created_at", { ascending: true })
-    .limit(100) // Limit to last 100 messages
+    .limit(100)
 
   if (error) {
     console.error("❌ Error fetching messages from Supabase:", error)
     return NextResponse.json({ error: "Failed to fetch messages" }, { status: 500 })
   }
 
-  // Filter out expired messages on the server-side before sending
-  const now = new Date()
-  const filteredMessages = messages.filter((msg) => new Date(msg.expires_at) > now)
+  // Decrypt messages if it's a private room
+  let processedMessages = messages || []
+  if (room.type === "private" && room.encryption_key) {
+    processedMessages = await Promise.all(
+      messages.map(async (msg) => ({
+        ...msg,
+        content: await ChatEncryption.decryptMessage(msg.content, room.encryption_key),
+      })),
+    )
+  }
 
-  console.log(`📋 Returning ${filteredMessages.length} messages from Supabase`)
+  // Filter out expired messages
+  const now = new Date()
+  const filteredMessages = processedMessages.filter((msg) => new Date(msg.expires_at) > now)
+
+  console.log(`📋 Returning ${filteredMessages.length} messages from room ${room.name}`)
   return NextResponse.json({
     messages: filteredMessages,
-    onlineUsers: Array.from(onlineUsers),
+    onlineUsers: Array.from(onlineUsers[roomId] || []),
+    room,
   })
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { action, sender, content, messageId, emoji } = body
-    const supabase = getSupabaseServerClient() // Get server-side client
+    const { action, sender, content, messageId, emoji, roomId = "public" } = body
+    const supabase = getSupabaseServerClient()
 
     if (!supabase) {
-      console.error("Supabase server client is null. Cannot process API request.")
       return NextResponse.json({ error: "Supabase not configured on server" }, { status: 500 })
     }
 
     if (action === "typing") {
       if (sender) {
-        typingUsers[sender] = {
+        if (!typingUsers[roomId]) typingUsers[roomId] = {}
+        typingUsers[roomId][sender] = {
           username: sender,
           timestamp: Date.now(),
         }
-        // No broadcast needed here, client polls for typing status
       }
       return NextResponse.json({ success: true })
     }
@@ -94,7 +115,6 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "Missing messageId, emoji, or sender" }, { status: 400 })
       }
 
-      // Fetch the message to update its reactions
       const { data: existingMessage, error: fetchError } = await supabase
         .from("messages")
         .select("reactions")
@@ -102,7 +122,6 @@ export async function POST(request: NextRequest) {
         .single()
 
       if (fetchError || !existingMessage) {
-        console.error("❌ Error fetching message for reaction:", fetchError)
         return NextResponse.json({ error: "Message not found" }, { status: 404 })
       }
 
@@ -111,7 +130,6 @@ export async function POST(request: NextRequest) {
         currentReactions[emoji] = []
       }
 
-      // Toggle reaction
       const userIndex = currentReactions[emoji].indexOf(sender)
       if (userIndex > -1) {
         currentReactions[emoji].splice(userIndex, 1)
@@ -122,7 +140,6 @@ export async function POST(request: NextRequest) {
         currentReactions[emoji].push(sender)
       }
 
-      // Update reactions in Supabase
       const { data: updatedMessage, error: updateError } = await supabase
         .from("messages")
         .update({ reactions: currentReactions })
@@ -131,11 +148,9 @@ export async function POST(request: NextRequest) {
         .single()
 
       if (updateError || !updatedMessage) {
-        console.error("❌ Error updating reaction in Supabase:", updateError)
         return NextResponse.json({ error: "Failed to update reaction" }, { status: 500 })
       }
 
-      console.log(`👍 Reaction ${emoji} by ${sender} on message ${messageId}`)
       return NextResponse.json({ message: updatedMessage })
     }
 
@@ -143,20 +158,34 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Missing sender or content" }, { status: 400 })
     }
 
-    onlineUsers.add(sender) // Still in-memory for now
+    // Get room info
+    const { data: room } = await supabase.from("chat_rooms").select("*").eq("invite_code", roomId).single()
 
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours
+    if (!room) {
+      return NextResponse.json({ error: "Room not found" }, { status: 404 })
+    }
 
-    // Insert new message into Supabase
+    if (!onlineUsers[roomId]) onlineUsers[roomId] = new Set()
+    onlineUsers[roomId].add(sender)
+
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+
+    // Encrypt content if it's a private room
+    let messageContent = content
+    if (room.type === "private" && room.encryption_key) {
+      messageContent = await ChatEncryption.encryptMessage(content, room.encryption_key)
+    }
+
     const { data: newMessage, error } = await supabase
       .from("messages")
       .insert({
         sender,
-        content,
+        content: messageContent,
         expires_at: expiresAt,
-        reactions: {}, // Initialize empty reactions
+        reactions: {},
+        room_id: room.id,
       })
-      .select() // Select the inserted row to get its ID and other defaults
+      .select()
       .single()
 
     if (error || !newMessage) {
@@ -164,9 +193,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Failed to send message" }, { status: 500 })
     }
 
-    console.log(`💬 New message from ${sender}: "${content}" (ID: ${newMessage.id})`)
+    console.log(`💬 New message in ${room.name} from ${sender}`)
 
-    return NextResponse.json({ message: newMessage, success: true })
+    // Return the message with decrypted content for the response
+    const responseMessage = {
+      ...newMessage,
+      content: content, // Return original content, not encrypted
+    }
+
+    return NextResponse.json({ message: responseMessage, success: true })
   } catch (error) {
     console.error("❌ Error in POST /api/messages:", error)
     return NextResponse.json({ error: "Invalid request" }, { status: 400 })
@@ -176,13 +211,11 @@ export async function POST(request: NextRequest) {
 export async function DELETE() {
   const supabase = getSupabaseServerClient()
   if (!supabase) {
-    console.error("Supabase server client is null. Cannot process API request.")
     return NextResponse.json({ error: "Supabase not configured on server" }, { status: 500 })
   }
 
   const now = new Date().toISOString()
 
-  // Delete expired messages from Supabase
   const { count, error } = await supabase
     .from("messages")
     .delete()

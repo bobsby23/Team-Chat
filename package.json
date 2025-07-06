@@ -3,35 +3,36 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
+    "dev": "next dev",
+    "lint": "next lint",
+    "start": "next start"
   },
   "dependencies": {
-    "next": "15.0.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "class-variance-authority": "^0.7.0",
+    "@radix-ui/react-dropdown-menu": "2.1.0",
+    "@radix-ui/react-label": "1.0.1",
+    "@radix-ui/react-scroll-area": "1.1.0",
+    "@radix-ui/react-slot": "1.1.0",
+    "@supabase/supabase-js": "latest",
+    "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "lucide-react": "^0.395.0",
-    "tailwind-merge": "^2.3.0",
-    "tailwindcss-animate": "^1.0.7",
-    "@radix-ui/react-slot": "^1.1.0",
-    "@radix-ui/react-scroll-area": "^1.1.0",
-    "@radix-ui/react-label": "^2.1.0",
-    "@radix-ui/react-dropdown-menu": "^2.1.0",
-    "@supabase/supabase-js": "^2.45.4"
+    "converse.js": "latest",
+    "lucide-react": "^0.454.0",
+    "next": "15.2.4",
+    "react": "^19",
+    "react-dom": "^19",
+    "tailwind-merge": "^2.5.5",
+    "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
-    "eslint": "^8.0.0",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "autoprefixer": "10.4.20",
+    "eslint": "8.0.0",
     "eslint-config-next": "15.0.0",
-    "typescript": "^5.0.0",
-    "tailwindcss": "^3.4.0",
-    "autoprefixer": "^10.4.20",
-    "postcss": "^8.4.47"
+    "postcss": "^8.5",
+    "tailwindcss": "3.4.0",
+    "typescript": "^5"
   }
 }
