@@ -23,13 +23,12 @@ interface Message {
 
 interface ChatInterfaceProps {
   username: string
-  roomCode?: string
   onBack: () => void
 }
 
 const EMOJI_OPTIONS = ["👍", "❤️", "😂", "😮", "😢", "😡", "🎉", "🔥"]
 
-export function ChatInterface({ username, roomCode = "public", onBack }: ChatInterfaceProps) {
+export function ChatInterface({ username, onBack }: ChatInterfaceProps) {
   /* ------------------------------------------------------------------ */
   /*                    ── Local component state ──                      */
   /* ------------------------------------------------------------------ */
@@ -39,7 +38,6 @@ export function ChatInterface({ username, roomCode = "public", onBack }: ChatInt
   const [typingUsers, setTypingUsers] = useState<string[]>([])
   const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "disconnected">("connecting")
   const [showEmojiPicker, setShowEmojiPicker] = useState<string | null>(null)
-  const [room, setRoom] = useState<any>(null)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const typingTimeoutRef = useRef<NodeJS.Timeout>()
@@ -83,7 +81,7 @@ export function ChatInterface({ username, roomCode = "public", onBack }: ChatInt
   /* ------------------------------------------------------------------ */
   const loadMessages = useCallback(async () => {
     try {
-      const res = await fetch(`/api/messages?roomId=${encodeURIComponent(roomCode)}`)
+      const res = await fetch("/api/messages")
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
 
@@ -95,13 +93,12 @@ export function ChatInterface({ username, roomCode = "public", onBack }: ChatInt
         })),
       )
       setOnlineUsers(data.onlineUsers ?? [])
-      setRoom(data.room)
       setConnectionStatus("connected")
     } catch (err) {
       console.error("Load messages error:", err)
       setConnectionStatus("disconnected")
     }
-  }, [roomCode])
+  }, [])
 
   /* ------------------------------------------------------------------ */
   /*                  ── Supabase Realtime subscription ──               */
@@ -121,7 +118,7 @@ export function ChatInterface({ username, roomCode = "public", onBack }: ChatInt
     }
 
     const channel = supabase
-      .channel(`chat_room_${roomCode}`)
+      .channel("chat_room")
       .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, (payload) => {
         if (payload.eventType === "INSERT") {
           const m = payload.new as any
@@ -147,14 +144,14 @@ export function ChatInterface({ username, roomCode = "public", onBack }: ChatInt
       })
 
     supabaseChannelRef.current = channel
-  }, [roomCode])
+  }, [])
 
   /* ------------------------------------------------------------------ */
   /*                       ── Poll presence typing ──                    */
   /* ------------------------------------------------------------------ */
   const pollPresence = useCallback(async () => {
     try {
-      const res = await fetch(`/api/messages?action=typing&roomId=${encodeURIComponent(roomCode)}`)
+      const res = await fetch("/api/messages?action=typing")
       if (!res.ok) return
       const data = await res.json()
       setTypingUsers(data.typing.filter((u: string) => u !== username))
@@ -162,16 +159,14 @@ export function ChatInterface({ username, roomCode = "public", onBack }: ChatInt
     } catch (err) {
       // ignore
     }
-  }, [username, roomCode])
+  }, [username])
 
   /* ------------------------------------------------------------------ */
   /*                   ── Component mount / unmount ──                  */
   /* ------------------------------------------------------------------ */
   useEffect(() => {
     // join
-    fetch(
-      `/api/messages?action=join&username=${encodeURIComponent(username)}&roomId=${encodeURIComponent(roomCode)}`,
-    ).catch(console.error)
+    fetch(`/api/messages?action=join&username=${encodeURIComponent(username)}`).catch(console.error)
 
     loadMessages()
     setupSupabaseRealtime()
@@ -180,14 +175,12 @@ export function ChatInterface({ username, roomCode = "public", onBack }: ChatInt
 
     return () => {
       // leave
-      fetch(
-        `/api/messages?action=leave&username=${encodeURIComponent(username)}&roomId=${encodeURIComponent(roomCode)}`,
-      ).catch(console.error)
-      if (supabaseChannelRef.current) supabase?.removeChannel(supabaseChannelRef.current)
+      fetch(`/api/messages?action=leave&username=${encodeURIComponent(username)}`).catch(console.error)
+      if (supabaseChannelRef.current) supabase.removeChannel(supabaseChannelRef.current)
       if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current)
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
     }
-  }, [username, roomCode, loadMessages, setupSupabaseRealtime, pollPresence])
+  }, [username, loadMessages, setupSupabaseRealtime, pollPresence])
 
   /* ------------------------------------------------------------------ */
   /*                            ── Actions ──                           */
@@ -216,7 +209,7 @@ export function ChatInterface({ username, roomCode = "public", onBack }: ChatInt
       const res = await fetch("/api/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sender: username, content, roomId: roomCode }),
+        body: JSON.stringify({ sender: username, content }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
     } catch (err) {
@@ -230,7 +223,7 @@ export function ChatInterface({ username, roomCode = "public", onBack }: ChatInt
     fetch("/api/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "typing", sender: username, roomId: roomCode }),
+      body: JSON.stringify({ action: "typing", sender: username }),
     }).catch(console.error)
 
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
@@ -242,7 +235,7 @@ export function ChatInterface({ username, roomCode = "public", onBack }: ChatInt
       await fetch("/api/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "reaction", messageId, emoji, sender: username, roomId: roomCode }),
+        body: JSON.stringify({ action: "reaction", messageId, emoji, sender: username }),
       })
       setShowEmojiPicker(null)
     } catch (err) {
@@ -251,12 +244,11 @@ export function ChatInterface({ username, roomCode = "public", onBack }: ChatInt
   }
 
   const shareRoom = async () => {
-    const url = roomCode === "public" ? `${window.location.origin}/` : `${window.location.origin}/room/${roomCode}`
-
+    const url = `${window.location.origin}/join`
     if (navigator.share) {
       await navigator.share({
-        title: `Join ${room?.name || "Bobsby Chat"}`,
-        text: `Join our ${room?.type === "private" ? "private" : "public"} chat room`,
+        title: "Join Bobsby Chat",
+        text: "Join our secure chat room",
         url,
       })
     } else {
@@ -277,10 +269,7 @@ export function ChatInterface({ username, roomCode = "public", onBack }: ChatInt
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
-            <h1 className="font-semibold text-lg text-white">
-              {room?.name || "Bobsby Chat Room"}
-              {room?.type === "private" && <Lock className="h-4 w-4 inline ml-2 text-purple-400" />}
-            </h1>
+            <h1 className="font-semibold text-lg text-white">Bobsby Chat Room</h1>
             <div className="flex items-center space-x-2">
               {getConnectionIcon()}
               <span className="text-sm text-gray-400">{getConnectionText()}</span>
@@ -417,7 +406,7 @@ export function ChatInterface({ username, roomCode = "public", onBack }: ChatInt
             <div className="flex items-center justify-between mt-2 text-xs text-gray-400">
               <span className="flex items-center">
                 <Lock className="h-4 w-4 mr-1" />
-                {room?.type === "private" ? "End-to-end encrypted" : "Secure connection"}
+                Secure connection
               </span>
               <span>{onlineUsers.length} online</span>
             </div>
@@ -479,12 +468,9 @@ export function ChatInterface({ username, roomCode = "public", onBack }: ChatInt
                     </Badge>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-gray-400">Encryption</span>
-                    <Badge
-                      variant="secondary"
-                      className={`text-xs ${room?.type === "private" ? "bg-purple-900 text-purple-100" : "bg-green-900 text-green-100"}`}
-                    >
-                      {room?.type === "private" ? "E2E" : "TLS"}
+                    <span className="text-gray-400">Reactions</span>
+                    <Badge variant="secondary" className="text-xs bg-purple-900 text-purple-100">
+                      Enabled
                     </Badge>
                   </div>
                 </div>
